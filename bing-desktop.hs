@@ -1,6 +1,7 @@
-{-# LANGUAGE DeriveDataTypeable, NamedFieldPuns, OverloadedStrings #-}
+{-# LANGUAGE DeriveDataTypeable, NamedFieldPuns #-}
 module Main (main) where
 
+import Control.Category (Category)
 import Control.Exception (bracket)
 import Control.Monad
 import Control.Monad.IO.Class (liftIO)
@@ -17,17 +18,18 @@ import Foreign.C (CInt)
 import Graphics.X11.Xlib (Display)
 import Graphics.X11.Xlib.Display
 
-import Network.HTTP hiding (sendHTTP)
-import Network.HTTP.HandleStream
+import Network.HTTP
 import Network.URI
 
 import System.Console.CmdArgs
-import System.Environment (getEnv)
+import System.Environment (getEnv, getProgName)
 import System.FilePath (takeFileName)
 import System.IO (hPrint, stderr)
 import System.IO.Error (catchIOError, isDoesNotExistError, isUserError)
 
 import Text.XML.HXT.Core
+
+import Prelude hiding ((*), (/))
 
 data BingDesktop = BingDesktop {} deriving (Data, Typeable)
 
@@ -36,7 +38,8 @@ bingDesktop = BingDesktop {} &= verbosity
 
 main :: IO ()
 main = do
-  void $ cmdArgs bingDesktop
+  progName <- getProgName
+  BingDesktop {} <- cmdArgs $ bingDesktop &= program progName
   bracket openStream' close $ \ stream ->
     execWriterT (forM_ mkts $ \ mkt ->
       let request = httpGet "/HPImageArchive.aspx" ("?idx=0&n=30&" ++ mkt) in
@@ -44,11 +47,7 @@ main = do
       liftIO (sendHTTP stream request) >>=
       liftIO . getResponseBody >>= \ xmlString ->
       liftIO (runX (readString [] (ByteString.unpack xmlString) >>>
-                    get "images" >>>
-                    get "image" >>>
-                    get "urlBase" >>>
-                    getAny >>>
-                    getText)) >>=
+                    get "images"/get "image"/get "urlBase"/(*)/text)) >>=
       tell . HashSet.fromList) >>= \ urlBases -> do
         (width, height) <- getResolution
         forM_ (HashSet.toList urlBases) $ \ urlBase ->
@@ -58,6 +57,18 @@ main = do
           sendHTTP stream imageRequest >>=
           getResponseBody >>=
           ByteString.writeFile (takeFileName imagePath)
+
+(/) :: Category cat => cat a b -> cat b c -> cat a c
+(/) = (>>>)
+
+(*) :: ArrowXml a => a XmlTree XmlTree
+(*) = getChildren
+
+text :: ArrowXml a => a XmlTree String
+text = getText
+
+get :: ArrowXml a => String -> a XmlTree XmlTree
+get n = getChildren >>> isElem >>> hasName n
 
 openStream' :: HStream a => IO (HandleStream a)
 openStream' = openStream hostname 80
@@ -73,12 +84,6 @@ httpGet uriPath uriQuery =
                     , uriQuery
                     , uriFragment = ""
                     }
-
-get :: ArrowXml a => String -> a XmlTree XmlTree
-get n = getChildren >>> isElem >>> hasName n
-
-getAny :: ArrowXml a => a XmlTree XmlTree
-getAny = getChildren
 
 getResolution :: IO (CInt, CInt)
 getResolution =
