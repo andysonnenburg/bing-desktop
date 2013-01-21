@@ -20,9 +20,7 @@ executable bing-desktop
     filepath,
     HTTP,
     hxt,
-    network,
-    transformers,
-    unordered-containers
+    network
   if !os(windows)
     build-depends: X11
   if os(windows)

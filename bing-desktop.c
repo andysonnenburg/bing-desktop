@@ -1,9 +1,9 @@
 #include "wtypes.h"
 
-int screen_width(void) {
+int GetScreenWidth(void) {
   return GetSystemMetrics(SM_CXSCREEN);
 }
 
-int screen_height(void) {
+int GetScreenHeight(void) {
   return GetSystemMetrics(SM_CYSCREEN);
 }

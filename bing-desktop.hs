@@ -5,16 +5,12 @@
 {-# LANGUAGE NamedFieldPuns #-}
 module Main (main) where
 
-import Control.Category (Category)
 import Control.Exception (bracket)
 import Control.Monad
-import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.Writer.Strict
 
 import Data.ByteString.Lazy.Char8 (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as ByteString
-import qualified Data.HashSet as HashSet
-import Data.List (find)
+import Data.List (find, nub)
 import Data.Maybe (fromMaybe)
 
 #ifdef OS_WINDOWS
@@ -45,8 +41,6 @@ import System.IO.Error (catchIOError, isDoesNotExistError, isUserError)
 
 import Text.XML.HXT.Core
 
-import Prelude hiding ((/))
-
 data BingDesktop = BingDesktop {} deriving (Data, Typeable)
 
 bingDesktop :: BingDesktop
@@ -57,28 +51,26 @@ main = do
   progName <- getProgName
   BingDesktop {} <- cmdArgs $ bingDesktop &= program progName
   bracket openStream' close $ \ stream ->
-    execWriterT (forM_ mkts $ \ mkt ->
-      let request = httpGet "/HPImageArchive.aspx" ("?idx=0&n=30&" ++ mkt) in
-      liftIO (whenLoud $ hPrint stderr request) >>
-      liftIO (sendHTTP stream request) >>=
-      liftIO . getResponseBody >>= \ xmlString ->
-      liftIO (runX (readString [] (ByteString.unpack xmlString) >>>
-                    get "images"/get "image"/get "urlBase"/text)) >>=
-      tell . HashSet.fromList) >>= \ urlBases -> do
-        (width, height) <- getResolution
-        forM_ (HashSet.toList urlBases) $ \ urlBase ->
-          let imagePath = urlBase ++ "_" ++ show width ++ "x" ++ show height ++ ".jpg"
-              imageRequest = httpGet imagePath "" in
-          whenLoud (hPrint stderr imageRequest) >>
-          sendHTTP stream imageRequest >>=
-          getResponseBody >>=
-          ByteString.writeFile (takeFileName imagePath)
-
-(/) :: Category cat => cat a b -> cat b c -> cat a c
-(/) = (>>>)
-
-text :: ArrowXml a => a XmlTree String
-text = getChildren >>> getText
+    forM mkts (\ mkt ->
+      let request = httpGet "/HPImageArchive.aspx" ("?idx=0&n=8&" ++ mkt) in
+      whenLoud (hPrint stderr request) >>
+      sendHTTP stream request >>=
+      getResponseBody >>= \ xmlString ->
+      runX (readString [] (ByteString.unpack xmlString) >>>
+            get "images" >>>
+            get "image" >>>
+            get "urlBase" >>>
+            getChildren >>>
+            getText)) >>= \ urlBases -> do
+      (width, height) <- getResolution
+      forM_ (nub . concat $ urlBases) $ \ urlBase ->
+        let imagePath = urlBase ++ "_" ++
+                        show width ++ "x" ++ show height ++ ".jpg"
+            imageRequest = httpGet imagePath "" in
+        whenLoud (hPrint stderr imageRequest) >>
+        sendHTTP stream imageRequest >>=
+        getResponseBody >>=
+        ByteString.writeFile (takeFileName imagePath)
 
 get :: ArrowXml a => String -> a XmlTree XmlTree
 get n = getChildren >>> isElem >>> hasName n
@@ -102,9 +94,9 @@ getResolution :: IO (CInt, CInt)
 #ifdef OS_WINDOWS
 getResolution = liftM2 normalizeResolution getScreenWidth getScreenHeight
 
-foreign import ccall unsafe "screen_width" getScreenWidth :: IO CInt
+foreign import ccall unsafe "GetScreenWidth" getScreenWidth :: IO CInt
 
-foreign import ccall unsafe "screen_height" getScreenHeight :: IO CInt
+foreign import ccall unsafe "GetScreenHeight" getScreenHeight :: IO CInt
 #else
 getResolution =
   bracket openDefaultDisplay closeDisplay
