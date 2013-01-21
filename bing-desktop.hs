@@ -8,8 +8,9 @@ module Main (main) where
 import Control.Exception (bracket)
 import Control.Monad
 
-import Data.ByteString.Lazy.Char8 (ByteString)
-import qualified Data.ByteString.Lazy.Char8 as ByteString
+import Data.ByteString (ByteString, isPrefixOf, isSuffixOf, pack)
+import Data.ByteString.Char8 (unpack)
+import qualified Data.ByteString.Char8 as ByteString
 import Data.List (find, nub)
 import Data.Maybe (fromMaybe)
 
@@ -34,12 +35,12 @@ import System.Environment (getProgName)
 import System.Environment (getEnv, getProgName)
 #endif
 import System.FilePath (takeFileName)
-import System.IO (hPrint, stderr)
+import System.IO (hPrint, hPutStr, hPutStrLn, stderr)
 #ifndef OS_WINDOWS
 import System.IO.Error (catchIOError, isDoesNotExistError, isUserError)
 #endif
 
-import Text.XML.HXT.Core
+import Text.XML.HXT.Core hiding (when)
 
 data BingDesktop = BingDesktop {} deriving (Data, Typeable)
 
@@ -56,7 +57,7 @@ main = do
       whenLoud (hPrint stderr request) >>
       sendHTTP stream request >>=
       getResponseBody >>= \ xmlString ->
-      runX (readString [] (ByteString.unpack xmlString) >>>
+      runX (readString [] (unpack xmlString) >>>
             get "images" >>>
             get "image" >>>
             get "urlBase" >>>
@@ -69,8 +70,12 @@ main = do
             imageRequest = httpGet imagePath "" in
         whenLoud (hPrint stderr imageRequest) >>
         sendHTTP stream imageRequest >>=
-        getResponseBody >>=
-        ByteString.writeFile (takeFileName imagePath)
+        getResponseBody >>= \ xs ->
+        if isJPEG xs
+        then ByteString.writeFile (takeFileName imagePath) xs
+        else whenNormal $
+             hPutStr stderr imagePath >>
+             hPutStrLn stderr ": not a JPEG image file"
 
 get :: ArrowXml a => String -> a XmlTree XmlTree
 get n = getChildren >>> isElem >>> hasName n
@@ -146,3 +151,7 @@ mkts = [ "en-US"
        , "en-NZ"
        , "en-CA"
        ]
+
+isJPEG :: ByteString -> Bool
+isJPEG xs = pack [0xFF, 0xD8] `isPrefixOf` xs &&
+            pack [0xFF, 0xD9] `isSuffixOf` xs
